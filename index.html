@@ -1,0 +1,461 @@
+<!-- =========================
+  DAILY ATTENDANCE — FRONTEND (index.html)
+  Features:
+  - Login (username/password)
+  - Attendance Status: Present / Leave / Absent / Week Off
+  - If NOT Present → only Submit Status
+  - If Present → Start Time (selfie + outlet pic + geo + address) & End Time (selfie + geo)
+  - Auto date/time capture
+  - Reverse‑geocode with OpenStreetMap Nominatim
+  - Calls Google Apps Script backend (set API_URL)
+  - One Start & One End per user per day enforced server‑side
+========================= -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Daily Attendance</title>
+  <style>
+    :root{--bg:#eef2ff;--panel:#ffffff;--text:#1f2937;--muted:#6b7280;--brand1:#667eea;--brand2:#764ba2;--ok:#22c55e;--err:#ef4444;--warn:#f59e0b;--radius:16px}
+    html,body{height:100%}
+    body{margin:0;font:16px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:linear-gradient(135deg,var(--brand1),var(--brand2));display:flex;align-items:center;justify-content:center;padding:20px;color:var(--text)}
+    .container{background:var(--panel);max-width:640px;width:100%;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,.15);padding:28px}
+    h1{margin:0 0 6px;text-align:center}
+    .subtitle{text-align:center;color:var(--muted);margin-bottom:22px}
+    label{display:block;font-weight:600;margin:10px 0 6px}
+    input,select,textarea{width:100%;padding:12px 14px;border-radius:12px;border:2px solid #e5e7eb;outline:none}
+    input:focus,select:focus,textarea:focus{border-color:var(--brand1);box-shadow:0 0 0 3px #667eea30}
+    .btn{width:100%;padding:12px 14px;border-radius:12px;border:none;color:white;font-weight:700;cursor:pointer;margin-top:12px}
+    .primary{background:linear-gradient(135deg,var(--brand1),var(--brand2))}
+    .ok{background:linear-gradient(180deg,#16a34a,#22c55e)}
+    .danger{background:linear-gradient(180deg,#b91c1c,#ef4444)}
+    .muted{color:var(--muted)}
+    .hidden{display:none}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .panel{background:#f8fafc;border:1px solid #e5e7eb;border-radius:14px;padding:12px;margin-top:12px}
+    .camera{display:grid;gap:8px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px;padding:10px;text-align:center}
+    .preview{height:180px;background:#e5e7eb;border-radius:10px;display:grid;place-items:center;overflow:hidden}
+    .preview img{max-width:100%;max-height:100%}
+    .alert{padding:12px;border-radius:12px;margin-top:12px;font-weight:600}
+    .alert.error{background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca}
+    .alert.success{background:#dcfce7;color:#065f46;border:1px solid #bbf7d0}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- LOGIN -->
+    <section id="loginScreen">
+      <h1>Daily Attendance</h1>
+      <div class="subtitle">Please login to continue</div>
+      <label>Username</label>
+      <input id="username" required />
+      <label>Password</label>
+      <input id="password" type="password" required />
+      <button class="btn primary" id="btnLogin">Login</button>
+      <div id="loginMsg" class="alert error hidden"></div>
+    </section>
+
+    <!-- ATTENDANCE -->
+    <section id="attScreen" class="hidden">
+      <h1>Daily Attendance</h1>
+      <div class="subtitle">Welcome, <b id="welcomeUser"></b></div>
+
+      <!-- Attendance Status Block -->
+      <div class="panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div><b>Attendance Status</b></div>
+          <div class="badge" id="today"></div>
+        </div>
+        <label for="statusSelect">Select Status</label>
+        <select id="statusSelect">
+          <option value="">Choose…</option>
+          <option value="Present">Present</option>
+          <option value="Leave">Leave</option>
+          <option value="Absent">Absent</option>
+          <option value="Week Off">Week Off</option>
+        </select>
+        <button class="btn ok" id="btnSubmitStatus">Submit Status</button>
+        <div id="statusMsg" class="alert hidden"></div>
+      </div>
+
+      <!-- Present-only controls -->
+      <div id="presentBlock" class="hidden">
+        <div class="panel">
+          <label for="actionType">Action Type</label>
+          <select id="actionType">
+            <option value="">Choose…</option>
+            <option value="start">Start Time</option>
+            <option value="end">End Time</option>
+          </select>
+          <div id="ruleMsg" class="muted" style="margin-top:6px">Start must be done before End. One Start & End per day.</div>
+        </div>
+
+        <!-- START FORM -->
+        <div id="startForm" class="panel hidden">
+          <div class="row">
+            <div>
+              <label>Outlet Name</label>
+              <input id="outletName" placeholder="e.g., Needs Palasbari" />
+            </div>
+            <div>
+              <label>Outlet Location (notes)</label>
+              <input id="outletLocText" placeholder="Address/landmark" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="camera">
+              <div><b>Selfie</b></div>
+              <div class="preview" id="prevStartSelfie"><span class="muted">Tap to capture</span></div>
+              <button class="btn primary" data-cap="startSelfie">Capture Selfie</button>
+            </div>
+            <div class="camera">
+              <div><b>Outlet Picture</b></div>
+              <div class="preview" id="prevOutlet"><span class="muted">Tap to capture</span></div>
+              <button class="btn primary" data-cap="outlet">Capture Outlet</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div><b>Current Location</b></div>
+            <div id="locStart" class="muted">Fetching…</div>
+          </div>
+
+          <button class="btn ok" id="btnStart">Submit Start Time</button>
+          <div id="startMsg" class="alert hidden"></div>
+        </div>
+
+        <!-- END FORM -->
+        <div id="endForm" class="panel hidden">
+          <div class="camera">
+            <div><b>Selfie (End)</b></div>
+            <div class="preview" id="prevEndSelfie"><span class="muted">Tap to capture</span></div>
+            <button class="btn primary" data-cap="endSelfie">Capture End Selfie</button>
+          </div>
+          <div class="panel">
+            <div><b>Current Location</b></div>
+            <div id="locEnd" class="muted">Fetching…</div>
+          </div>
+          <button class="btn danger" id="btnEnd">Submit End Time</button>
+          <div id="endMsg" class="alert hidden"></div>
+        </div>
+      </div>
+
+      <button class="btn" style="background:#111827;color:#fff" id="btnLogout">Logout</button>
+    </section>
+
+    <input type="file" id="camInput" accept="image/*" capture="environment" class="hidden" />
+  </div>
+
+  <script>
+    // ====== CONFIG ======
+    const API_URL = "https://script.google.com/macros/s/AKfycbzno6WuWu-u289C62IyJPVMPU0x6RAxDfeFcappQ4KhBYLXx7Tku0Uc1AqcAsFt3s9L/exec"; // <-- paste your Apps Script Web App /exec URL here
+
+    // ====== State ======
+    let currentUser = null;
+    let geo = { lat:null, lon:null, acc:null, addr:null };
+    let startSelfie=null, outletPic=null, endSelfie=null;
+    let hasStarted=false, hasEnded=false;
+
+    const $ = (id)=>document.getElementById(id);
+    const todayStr = ()=> new Date().toLocaleDateString();
+
+    // ====== Helpers ======
+    function show(el, show=true){ if(typeof el==="string") el=$(el); el.classList.toggle('hidden', !show); }
+    function alertBox(elId, msg, type){ const el=$(elId); el.textContent=msg; el.className='alert ' + (type||''); show(el,true); setTimeout(()=>show(el,false), 5000); }
+
+    function getLocation(intoId){
+      const target = $(intoId);
+      target.textContent = 'Getting GPS…';
+      if(!navigator.geolocation){ target.textContent='Geolocation not supported'; return; }
+      navigator.geolocation.getCurrentPosition(async pos=>{
+        geo.lat = pos.coords.latitude; geo.lon = pos.coords.longitude; geo.acc = pos.coords.accuracy;
+        target.textContent = `Lat ${geo.lat.toFixed(6)}, Lon ${geo.lon.toFixed(6)} (±${Math.round(geo.acc)}m)`;
+        try{
+          const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${geo.lat}&lon=${geo.lon}`;
+          const r = await fetch(url, {headers:{'Accept':'application/json'}});
+          const j = await r.json(); geo.addr = j.display_name || '';
+          target.innerHTML = `📍 ${geo.addr} <br><span class="muted">(Lat ${geo.lat.toFixed(6)}, Lon ${geo.lon.toFixed(6)} ±${Math.round(geo.acc)}m)</span>`;
+        }catch{ /* keep coords even if reverse fails */ }
+      }, err=>{
+        target.textContent = 'Could not get GPS: ' + (err.message||'');
+      }, {enableHighAccuracy:true, timeout:20000, maximumAge:0});
+    }
+
+    function pickPhoto(which){ $('camInput').onchange = (e)=>{
+      const f=e.target.files[0]; if(!f) return;
+      const fr=new FileReader(); fr.onload=()=>{
+        const b64=fr.result; if(which==='startSelfie'){startSelfie=b64; $('prevStartSelfie').innerHTML=`<img src="${b64}">`}
+        if(which==='outlet'){outletPic=b64; $('prevOutlet').innerHTML=`<img src="${b64}">`}
+        if(which==='endSelfie'){endSelfie=b64; $('prevEndSelfie').innerHTML=`<img src="${b64}">`}
+        $('camInput').value='';
+      }; fr.readAsDataURL(f);
+    }; $('camInput').click(); }
+
+    async function postJSON(body){
+      const res = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const text = await res.text(); let json; try{ json = JSON.parse(text); }catch{ throw new Error('Non‑JSON from server: '+text); }
+      if(!res.ok || json.success===false){ throw new Error(json.message || ('HTTP '+res.status)); }
+      return json;
+    }
+
+    function updateUIFromStatus(){
+      // If non‑Present → hide presentBlock
+      const statusVal = $('statusSelect').value;
+      const isPresent = statusVal === 'Present';
+      show('presentBlock', isPresent);
+      if(!isPresent) return; // no need to show action forms
+
+      // Present: toggle start/end availability
+      $('actionType').disabled = false;
+      // If started already, disable Start
+      // If ended already, disable End as well
+      if(hasStarted){ /* keep */ } // visual hint handled in backend response if needed
+    }
+
+    // ====== Event wiring ======
+    window.addEventListener('DOMContentLoaded', () => {
+      $('today').textContent = todayStr();
+      // login
+      $('btnLogin').onclick = async ()=>{
+        const u=$('username').value.trim(); const p=$('password').value;
+        try{
+          const j = await postJSON({action:'authenticate', username:u, password:p});
+          currentUser = u; $('welcomeUser').textContent = u; show('loginScreen', false); show('attScreen', true);
+          $('statusSelect').value = ''; // force selection
+        }catch(err){ $('loginMsg').textContent = err.message; show('loginMsg', true); }
+      };
+
+      // status submit
+      $('btnSubmitStatus').onclick = async ()=>{
+        const status = $('statusSelect').value; if(!status){ alertBox('statusMsg','Please choose a status','error'); return; }
+        try{
+          const j = await postJSON({action:'setStatus', username: currentUser, status});
+          hasStarted = j.data?.hasStarted || false; hasEnded = j.data?.hasEnded || false;
+          alertBox('statusMsg','Status saved','success');
+          updateUIFromStatus();
+          if(status==='Present'){ getLocation('locStart'); }
+        }catch(err){ alertBox('statusMsg', err.message, 'error'); }
+      };
+
+      $('statusSelect').onchange = updateUIFromStatus;
+      $('actionType').onchange = ()=>{
+        const v=$('actionType').value; show('startForm', v==='start'); show('endForm', v==='end'); if(v==='start') getLocation('locStart'); if(v==='end') getLocation('locEnd');
+      };
+
+      // capture buttons
+      document.querySelectorAll('[data-cap]').forEach(btn=>{
+        btn.addEventListener('click', ()=> pickPhoto(btn.dataset.cap));
+      });
+
+      $('btnStart').onclick = async ()=>{
+        const status=$('statusSelect').value; if(status!=='Present'){ alertBox('startMsg','Status must be Present','error'); return; }
+        if(!startSelfie || !outletPic){ alertBox('startMsg','Please capture selfie and outlet picture','error'); return; }
+        const outletName=$('outletName').value.trim(); if(!outletName){ alertBox('startMsg','Enter outlet name','error'); return; }
+        const outletLocText=$('outletLocText').value.trim();
+        try{
+          const j = await postJSON({
+            action:'startAttendance', username: currentUser,
+            startLocation: geo.addr || (`${geo.lat}, ${geo.lon}`),
+            latitude: geo.lat, longitude: geo.lon, accuracy: geo.acc,
+            startSelfie: startSelfie, outletPicture: outletPic,
+            outletName, outletLocation: outletLocText
+          });
+          hasStarted = true; alertBox('startMsg','Start saved','success');
+          $('actionType').value=''; show('startForm',false);
+        }catch(err){ alertBox('startMsg', err.message, 'error'); }
+      };
+
+      $('btnEnd').onclick = async ()=>{
+        const status=$('statusSelect').value; if(status!=='Present'){ alertBox('endMsg','Status must be Present','error'); return; }
+        if(!endSelfie){ alertBox('endMsg','Please capture end selfie','error'); return; }
+        try{
+          const j = await postJSON({
+            action:'endAttendance', username: currentUser,
+            endLocation: geo.addr || (`${geo.lat}, ${geo.lon}`),
+            latitude: geo.lat, longitude: geo.lon, accuracy: geo.acc,
+            endSelfie: endSelfie
+          });
+          hasEnded = true; alertBox('endMsg', `End saved. Duration ${j.data?.duration||''}`, 'success');
+          $('actionType').value=''; show('endForm',false);
+        }catch(err){ alertBox('endMsg', err.message, 'error'); }
+      };
+
+      $('btnLogout').onclick = ()=>{ location.reload(); };
+    });
+  </script>
+</body>
+</html>
+
+
+<!-- =========================
+   GOOGLE APPS SCRIPT — BACKEND (Code.gs)
+   Steps:
+   1) script.new → paste this file
+   2) Set SHEET_ID, FOLDER_ID, SHEET_NAME, USERS_SHEET
+   3) Deploy → Web app → Execute as Me; Who has access: Anyone; copy /exec URL into API_URL above
+========================= -->
+
+// ===== CONFIG =====
+const SHEET_ID   = '1rn9Dz0W-WlRFnKy9rIE6F_p_00z2jchuqJwxUSa9sIU';
+const SHEET_NAME = 'Promoters Attendance Register'; // tab with columns per your screenshot
+const USERS_SHEET= 'Users'; // tab with Username, Password
+const FOLDER_ID  = '1AxXo7Oh6Tzp6pgN7YHo9CD6VVKCzM_DqGnPg4bsuk2pzTsmQm11V-CcZPhHzP_xKcOqmSeRc';
+
+// ===== Utilities =====
+function cors_(out){
+  return out.setMimeType(ContentService.MimeType.JSON)
+            .setHeader('Access-Control-Allow-Origin','*')
+            .setHeader('Access-Control-Allow-Methods','POST,GET,OPTIONS')
+            .setHeader('Access-Control-Allow-Headers','Content-Type');
+}
+function doOptions(){ return cors_(ContentService.createTextOutput('OK')); }
+function doGet(e){ return cors_(ContentService.createTextOutput(JSON.stringify({ok:true, ts:new Date()}))); }
+
+function doPost(e){
+  try{
+    const body = JSON.parse(e.postData.contents||'{}');
+    const action = body.action||'';
+    let res = { success:true, data:{} };
+    if(action==='authenticate') res = authenticate_(body);
+    else if(action==='setStatus') res = setStatus_(body);
+    else if(action==='startAttendance') res = startAttendance_(body);
+    else if(action==='endAttendance') res = endAttendance_(body);
+    else if(action==='checkStatus') res = checkStatus_(body);
+    else res = { success:false, message:'Unknown action' };
+    return cors_(ContentService.createTextOutput(JSON.stringify(res)));
+  }catch(err){
+    const msg = (err && err.stack) ? err.stack : String(err);
+    return cors_(ContentService.createTextOutput(JSON.stringify({success:false, message:msg})));
+  }
+}
+
+function open_(){ return SpreadsheetApp.openById(SHEET_ID); }
+function sheet_(name){ return open_().getSheetByName(name)||open_().insertSheet(name); }
+function headersMap_(sh){
+  const head = sh.getRange(1,1,1, sh.getLastColumn()||20).getValues()[0];
+  const map = {}; head.forEach((h,i)=>{ if(h) map[String(h).trim()] = i+1; });
+  return map;
+}
+
+function findRowToday_(username){
+  const sh = sheet_(SHEET_NAME); const map = headersMap_(sh);
+  const last = sh.getLastRow(); if(last<2) return {row:0, map};
+  const vals = sh.getRange(2,1,last-1, Math.max(13, sh.getLastColumn())).getValues();
+  const today = new Date(); today.setHours(0,0,0,0);
+  for(let i=0;i<vals.length;i++){
+    const u = vals[i][(map['Username']||1)-1];
+    const d = vals[i][(map['Date']||2)-1];
+    const dt = d instanceof Date ? new Date(d) : new Date(d);
+    if(String(u).trim().toLowerCase()===String(username).trim().toLowerCase()){
+      if(!isNaN(dt)){ dt.setHours(0,0,0,0); if(+dt===+today) return {row:i+2, map}; }
+    }
+  }
+  return {row:0, map};
+}
+
+function ensureTodayRow_(username){
+  const {row, map} = findRowToday_(username); const sh = sheet_(SHEET_NAME);
+  if(row) return {row, map};
+  const now = new Date();
+  const r = sh.getLastRow()+1;
+  const m = headersMap_(sh);
+  sh.getRange(r, m['Username']).setValue(username);
+  sh.getRange(r, m['Date']).setValue(new Date(now.getFullYear(), now.getMonth(), now.getDate())); // date only
+  return {row:r, map:m};
+}
+
+function saveB64ToDrive_(dataUrl, prefix){
+  if(!dataUrl) return '';
+  const m = String(dataUrl).match(/^data:(.*?);base64,(.*)$/); if(!m) return '';
+  const contentType = m[1]||'image/jpeg'; const bytes = Utilities.base64Decode(m[2]);
+  const blob = Utilities.newBlob(bytes, contentType, `${prefix}_${Date.now()}.jpg`);
+  const file = DriveApp.getFolderById(FOLDER_ID).createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return file.getUrl();
+}
+
+function fmtHMS_(ms){
+  const s = Math.max(0, Math.floor(ms/1000));
+  const hh = String(Math.floor(s/3600)).padStart(2,'0');
+  const mm = String(Math.floor((s%3600)/60)).padStart(2,'0');
+  const ss = String(s%60).padStart(2,'0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+// ===== Actions =====
+function authenticate_({username, password}){
+  const sh = sheet_(USERS_SHEET); const map = headersMap_(sh);
+  const uCol = map['Username']||1, pCol = map['Password']||2;
+  const last = sh.getLastRow();
+  const vals = sh.getRange(2,1, Math.max(0,last-1), Math.max(uCol,pCol)).getValues();
+  const u = String(username||'').trim().toLowerCase();
+  const p = String(password||'').trim();
+  const ok = vals.some(r => String(r[uCol-1]).trim().toLowerCase()===u && String(r[pCol-1]).trim()===p);
+  return ok ? {success:true, message:'Login OK'} : {success:false, message:'Invalid username or password'};
+}
+
+function setStatus_({username, status}){
+  const allowed = ['Present','Leave','Absent','Week Off'];
+  if(!allowed.includes(status)) return {success:false, message:'Invalid status'};
+  const {row, map} = ensureTodayRow_(username);
+  const sh = sheet_(SHEET_NAME);
+  sh.getRange(row, map['Status']).setValue(status);
+  // return whether already started/ended
+  const started = !!sh.getRange(row, map['StartTime']).getValue();
+  const ended   = !!sh.getRange(row, map['EndTime']).getValue();
+  return {success:true, data:{hasStarted: started, hasEnded: ended}};
+}
+
+function checkStatus_({username}){
+  const {row, map} = findRowToday_(username); if(!row) return {success:true, data:{hasStarted:false, hasEnded:false}};
+  const sh = sheet_(SHEET_NAME);
+  return {success:true, data:{
+    hasStarted: !!sh.getRange(row, map['StartTime']).getValue(),
+    hasEnded:   !!sh.getRange(row, map['EndTime']).getValue(),
+    status:     String(sh.getRange(row, map['Status']).getValue()||'')
+  }};
+}
+
+function startAttendance_(body){
+  const {username, startLocation, startSelfie, outletName, outletLocation} = body;
+  const status = (setStatus_({username, status:'Present'}), 'Present'); // ensure row & status
+  const {row, map} = ensureTodayRow_(username); const sh = sheet_(SHEET_NAME);
+  if(sh.getRange(row, map['StartTime']).getValue()) return {success:false, message:'Start already submitted today'};
+
+  const now = new Date();
+  const selfieURL = saveB64ToDrive_(startSelfie, `${username}_startSelfie`);
+  const outletURL = saveB64ToDrive_(body.outletPicture, `${username}_outlet`);
+
+  sh.getRange(row, map['StartTime']).setValue(now);
+  sh.getRange(row, map['StartLocation']).setValue(startLocation||'');
+  sh.getRange(row, map['StartSelfieLink']).setValue(selfieURL);
+  sh.getRange(row, map['OutletName']).setValue(outletName||'');
+  sh.getRange(row, map['OutletLocation']).setValue(outletLocation||'');
+  sh.getRange(row, map['OutletPictureLink']).setValue(outletURL);
+
+  return {success:true, message:'Start saved'};
+}
+
+function endAttendance_(body){
+  const {username, endLocation, endSelfie} = body;
+  const {row, map} = findRowToday_(username); if(!row) return {success:false, message:'No start record found for today'};
+  const sh = sheet_(SHEET_NAME);
+  if(!sh.getRange(row, map['StartTime']).getValue()) return {success:false, message:'Start time not submitted yet'};
+  if(sh.getRange(row, map['EndTime']).getValue()) return {success:false, message:'End already submitted today'};
+
+  const now = new Date();
+  const endURL = saveB64ToDrive_((endSelfie||''), `${username}_endSelfie`);
+  sh.getRange(row, map['EndTime']).setValue(now);
+  sh.getRange(row, map['EndLocation']).setValue(endLocation||'');
+  sh.getRange(row, map['EndSelfieLink']).setValue(endURL);
+
+  // Duration hh:mm:ss
+  const start = sh.getRange(row, map['StartTime']).getValue();
+  const dur = fmtHMS_( now - new Date(start) );
+  sh.getRange(row, map['Duration']).setValue(dur);
+
+  return {success:true, data:{duration:dur}};
+}
